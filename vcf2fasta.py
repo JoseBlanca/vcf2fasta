@@ -217,9 +217,11 @@ def _get_overlaping_snps(init_snp, snps):
     return overlaping_snps
 
 
-def _split_segments_btw_snps(ref_seq, snps, region):
+def _split_segments_btw_snps(ref_seqs, snps, region):
 
     snps = PeekableIterator(snps)
+
+    ref_seq = ref_seqs.get_region(region)
 
     offset = int(region[1]) if len(region) > 1 else 0
     debug = False
@@ -356,11 +358,9 @@ def generate_seqs_for_samples(region, ref_seqs, vcf, samples=None,
     if samples is None:
         samples = vcf.samples
 
-    ref_seq = ref_seqs.get_region(region)
-
     temp_file, snps = vcf.get_snps_from_region(region)
     sample_seqs = [b''] * len(samples)
-    for sub_region, segment, next_snps in _split_segments_btw_snps(ref_seq,
+    for sub_region, segment, next_snps in _split_segments_btw_snps(ref_seqs,
                                                                    snps,
                                                                    region):
         for isample, sample in enumerate(samples):
@@ -881,9 +881,8 @@ class Test(unittest.TestCase):
             expected.append([((2, 3), b'g', [(3, 3)])])
 
             for region, exp in zip(regions, expected):
-                ref_seq = seqs.get_region(region)
                 temp_file, snps = vcf.get_snps_from_region(region)
-                segments = list(_split_segments_btw_snps(ref_seq, snps, region))
+                segments = list(_split_segments_btw_snps(seqs, snps, region))
                 assert self._get_segments_start_end(segments) == exp
 
     def test_seq_gt(self):
