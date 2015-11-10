@@ -351,7 +351,7 @@ def _get_gts_and_alleles_for_sample(snps, sample, min_gt_dp):
 
 
 def generate_seqs_for_samples(region, ref_seqs, vcf, samples=None,
-                              coverages=None):
+                              coverages=None, min_gt_dp=None):
 
     if samples is None:
         samples = vcf.samples
@@ -369,7 +369,7 @@ def generate_seqs_for_samples(region, ref_seqs, vcf, samples=None,
             if next_snps:
                 gts, alleles = _get_gts_and_alleles_for_sample(next_snps,
                                                                sample,
-                                                               min_dp)
+                                                               min_gt_dp)
                 gt = create_seq_gt(gts, alleles)
                 sample_seqs[isample] = _sum_strs(sample_seqs[isample], gt)
     return region, list(zip(samples, sample_seqs))
@@ -390,12 +390,13 @@ def write_regions_in_fasta(seq_regions, out_dir):
 
 
 def vcf2fasta(vcf_fpath, fasta_fpath, bed_fhand, out_dir, coverages=None,
-              n_threads=None):
+              min_gt_dp=None, n_threads=None):
     vcf = VCF(vcf_fpath)
     ref_seqs = SeqsSam(fasta_fpath)
     regions = parse_bed(bed_fhand)
     gen_seqs_for_region = partial(generate_seqs_for_samples ,ref_seqs=ref_seqs,
-                                  vcf=vcf, coverages=coverages)
+                                  vcf=vcf, coverages=coverages,
+                                  min_gt_dp=min_gt_dp)
     if n_threads is None:
         region_seqs = map(gen_seqs_for_region, regions)
     else:
@@ -799,7 +800,7 @@ class Test(unittest.TestCase):
             regions=[['20']]
             generate_seqs_for_region = partial(generate_seqs_for_samples,
                                                ref_seqs=refs, vcf=vcf,
-                                               min_dp=3)
+                                               min_gt_dp=3)
             res = map(generate_seqs_for_region, regions)
             res = list(res)
             assert res == [(['20'], [(b'i1', b'atGga'),
@@ -808,7 +809,7 @@ class Test(unittest.TestCase):
 
             generate_seqs_for_region = partial(generate_seqs_for_samples,
                                                ref_seqs=refs, vcf=vcf,
-                                               min_dp=10)
+                                               min_gt_dp=10)
             res = map(generate_seqs_for_region, regions)
             res = list(res)
             assert res == [(['20'], [(b'i1', b'atNga'),
@@ -818,7 +819,7 @@ class Test(unittest.TestCase):
 
             generate_seqs_for_region = partial(generate_seqs_for_samples,
                                                ref_seqs=refs, vcf=vcf,
-                                               min_dp=7)
+                                               min_gt_dp=7)
             res = map(generate_seqs_for_region, regions)
             res = list(res)
             assert res == [(['20'], [(b'i1', b'atNga'),
@@ -836,7 +837,7 @@ class Test(unittest.TestCase):
             covs = GenomicCoverages(fhand, min_cov=1, sep=b' ')
             generate_seqs_for_region = partial(generate_seqs_for_samples,
                                                ref_seqs=refs, vcf=vcf,
-                                               min_dp=7, coverages=covs)
+                                               min_gt_dp=7, coverages=covs)
             res = map(generate_seqs_for_region, regions)
             res = list(res)
             assert res == [(['20'], [(b'i1', b'atNga'),
