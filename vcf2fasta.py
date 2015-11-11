@@ -221,7 +221,7 @@ def _split_segments_btw_snps(ref_seqs, snps, region):
 
     snps = PeekableIterator(snps)
 
-    ref_seq = ref_seqs.get_region(region)
+    sample_ref_seqs = ref_seqs.get_masked_region(region)
 
     offset = int(region[1]) if len(region) > 1 else 0
     debug = False
@@ -229,6 +229,7 @@ def _split_segments_btw_snps(ref_seqs, snps, region):
         print('offset', offset)
 
     pos = offset
+    n_samples = ref_seqs.n_samples
 
     if debug:
         print('*' * 20)
@@ -252,7 +253,7 @@ def _split_segments_btw_snps(ref_seqs, snps, region):
             if snp['start'] == pos:
                 if debug:
                     print('segment just after a snp', snp['start'])
-                segment_seq = b''
+                segment_smpl_seqs = [b''] * n_samples
                 segment = 0, 0
             else:
                 if debug:
@@ -261,19 +262,21 @@ def _split_segments_btw_snps(ref_seqs, snps, region):
                 sstart = pos - offset
                 sstop = snp['start'] - offset
                 segment = sstart + offset, sstop + offset
-                segment_seq = ref_seq[sstart: sstop]
+                segment_smpl_seqs = [srfs[sstart: sstop] for srfs in sample_ref_seqs]
+                #segment_seq = ref_seq[sstart: sstop]
             pos = max([snp_['stop'] for snp_ in snps_to_yield])
             if len(region) < 3 or pos <= region[2]:
                 # Are the SNPs inside the region to return?
                 if debug:
-                    print('yield', segment_seq,
+                    print('yield', segment_smpl_seqs,
                           [(snp_['start'], snp_['stop'] - 1) for snp_ in snps_to_yield])
-                yield  segment, segment_seq, snps_to_yield
-            
-    remaining_seq = ref_seq[pos - offset:]
-    if remaining_seq:
+                yield  segment, segment_smpl_seqs, snps_to_yield
+
+    reamining_smpl_seqs = [srfs[pos - offset:] for srfs in sample_ref_seqs]
+    #remaining_seq = ref_seq[pos - offset:]
+    if reamining_smpl_seqs[0]:
         reg = pos, region[2] if len(region) > 2 else None
-        yield reg, remaining_seq, []
+        yield reg, reamining_smpl_seqs, []
 
 
 IUPAC = {tuple(sorted(nucls)): iupac.encode('utf8') for iupac, nucls in ambiguous_dna_values.items()}
@@ -352,20 +355,18 @@ def _get_gts_and_alleles_for_sample(snps, sample, min_gt_dp):
     return gts, alleles
 
 
-def generate_seqs_for_samples(region, ref_seqs, vcf, samples=None,
-                              coverages=None, min_gt_dp=None):
+def generate_seqs_for_samples(region, ref_seqs, vcf, min_gt_dp=None):
 
-    if samples is None:
-        samples = vcf.samples
+    samples = vcf.samples
 
     temp_file, snps = vcf.get_snps_from_region(region)
     sample_seqs = [b''] * len(samples)
-    for sub_region, segment, next_snps in _split_segments_btw_snps(ref_seqs,
+    for sub_region, smpl_segment_seqs, next_snps in _split_segments_btw_snps(ref_seqs,
                                                                    snps,
                                                                    region):
         for isample, sample in enumerate(samples):
             sample_seqs[isample] = _sum_strs(sample_seqs[isample],
-                                             segment)
+                                             smpl_segment_seqs[isample])
             if next_snps:
                 gts, alleles = _get_gts_and_alleles_for_sample(next_snps,
                                                                sample,
@@ -392,11 +393,11 @@ def write_regions_in_fasta(seq_regions, out_dir):
 def vcf2fasta(vcf_fpath, fasta_fpath, bed_fhand, out_dir, coverages=None,
               min_gt_dp=None, n_threads=None):
     vcf = VCF(vcf_fpath)
-    ref_seqs = SeqsSam(fasta_fpath)
+    ref_seqs = SeqsSam(fasta_fpath, coverages=coverages,
+                       n_samples=len(vcf.samples))
     regions = parse_bed(bed_fhand)
-    gen_seqs_for_region = partial(generate_seqs_for_samples ,ref_seqs=ref_seqs,
-                                  vcf=vcf, coverages=coverages,
-                                  min_gt_dp=min_gt_dp)
+    gen_seqs_for_region = partial(generate_seqs_for_samples, ref_seqs=ref_seqs,
+                                  vcf=vcf, min_gt_dp=min_gt_dp)
     if n_threads is None:
         region_seqs = map(gen_seqs_for_region, regions)
     else:
@@ -532,7 +533,10 @@ class Seqs():
         self.coverages = coverages
         self.n_samples = n_samples
 
-    def get_masked_regions(self, region):
+    def get_masked_region(self, region):
+        '''It returns the masked sequence for every sample.
+
+        The masking is done according to the BAM coverage.'''
         seq = self.get_region(region)
 
         if len(region) < 3:
@@ -540,6 +544,8 @@ class Seqs():
             start = region[1] if len(region) > 1 else 0
             end = region[2] if len(region) > 2 else len(seq) + start
             region = [chrom, start, end]
+        else:
+            chrom, start, end = region
 
         n_samples = self.n_samples
 
@@ -740,30 +746,30 @@ class Test(unittest.TestCase):
         ref_fhand = StringIO(FASTA1)
         seqs = SeqsFasta(ref_fhand, coverages=covs, n_samples=3)
         expected = [b'NtCNN', b'NtCNN', b'NtCgN']
-        assert list(seqs.get_masked_regions(['20'])) == expected
+        assert list(seqs.get_masked_region(['20'])) == expected
 
         fhand = BytesIO(cov)
         covs = GenomicCoverages(fhand, min_cov=6, sep=b' ')
         ref_fhand = StringIO(FASTA1)
         seqs = SeqsFasta(ref_fhand, coverages=covs, n_samples=3)
         expected = [b'NNNNN', b'NNNNN', b'NNNNN']
-        assert list(seqs.get_masked_regions(['2'])) == expected
+        assert list(seqs.get_masked_region(['2'])) == expected
         expected = [b'tCgN', b'tCgN', b'tCgN']
-        assert list(seqs.get_masked_regions(['20', 1])) == expected
+        assert list(seqs.get_masked_region(['20', 1])) == expected
         expected = [b'NNNNN', b'NNNNN', b'NNNNN']
-        assert list(seqs.get_masked_regions(['2'])) == expected
+        assert list(seqs.get_masked_region(['2'])) == expected
 
         ref_fhand = StringIO(FASTA1)
         seqs = SeqsFasta(ref_fhand, n_samples=3)
         expected = [b'atCga', b'atCga', b'atCga']
-        assert list(seqs.get_masked_regions(['20'])) == expected
+        assert list(seqs.get_masked_region(['20'])) == expected
 
     def test_seq_for_sample(self):
         ref_fhand = StringIO(FASTA1)
-        refs = SeqsFasta(ref_fhand)
 
         with TestVcf(VCF1) as test_vcf:
             vcf = VCF(test_vcf.vcf_fpath)
+            refs = SeqsFasta(ref_fhand, n_samples=len(vcf.samples))
             regions=[['20'], ('21', 1, 5), ['22']]
             generate_seqs_for_region = partial(generate_seqs_for_samples,
                                                ref_seqs=refs, vcf=vcf)
@@ -832,15 +838,46 @@ class Test(unittest.TestCase):
 
             fhand = BytesIO(cov)
             covs = GenomicCoverages(fhand, min_cov=1, sep=b' ')
+            ref_fhand = StringIO(FASTA1)
+            refs = SeqsFasta(ref_fhand, coverages=covs,
+                             n_samples=len(vcf.samples))
             generate_seqs_for_region = partial(generate_seqs_for_samples,
                                                ref_seqs=refs, vcf=vcf,
-                                               min_gt_dp=7, coverages=covs)
+                                               min_gt_dp=7)
             res = map(generate_seqs_for_region, regions)
             res = list(res)
-            assert res == [(['20'], [(b'i1', b'atNga'),
-                                     (b'i2', b'atCga'),
-                                     (b'i3', b'atNga')])]
+            assert res == [(['20'], [(b'i1', b'NtNga'),
+                                     (b'i2', b'NtCga'),
+                                     (b'i3', b'NtNga')])]
 
+
+            fhand = BytesIO(cov)
+            covs = GenomicCoverages(fhand, min_cov=9, sep=b' ')
+            ref_fhand = StringIO(FASTA1)
+            refs = SeqsFasta(ref_fhand, coverages=covs,
+                             n_samples=len(vcf.samples))
+            generate_seqs_for_region = partial(generate_seqs_for_samples,
+                                               ref_seqs=refs, vcf=vcf,
+                                               min_gt_dp=9)
+            res = map(generate_seqs_for_region, regions)
+            res = list(res)
+            assert res == [(['20'], [(b'i1', b'NtNNN'),
+                                     (b'i2', b'NtCNN'),
+                                     (b'i3', b'NtNNN')])]
+
+            fhand = BytesIO(cov)
+            covs = GenomicCoverages(fhand, min_cov=10, sep=b' ')
+            ref_fhand = StringIO(FASTA1)
+            refs = SeqsFasta(ref_fhand, coverages=covs,
+                             n_samples=len(vcf.samples))
+            generate_seqs_for_region = partial(generate_seqs_for_samples,
+                                               ref_seqs=refs, vcf=vcf,
+                                               min_gt_dp=7)
+            res = map(generate_seqs_for_region, regions)
+            res = list(res)
+            assert res == [(['20'], [(b'i1', b'NNNNN'),
+                                     (b'i2', b'NNCNN'),
+                                     (b'i3', b'NNNNN')])]
 
 
     def _get_segments_start_end(self, segments):
@@ -857,25 +894,25 @@ class Test(unittest.TestCase):
         # FASTA2 2 acgtACGT
 
         ref_fhand = StringIO(FASTA2)
-        seqs = SeqsFasta(ref_fhand)
+        seqs = SeqsFasta(ref_fhand, n_samples=1)
         with TestVcf(OVERLAPING_SNPS2_VCF) as test_vcf:
             vcf = VCF(test_vcf.vcf_fpath)
             regions = [('2',)]
-            expected = [[((0, 0), b'', [(0, 1)]),
-                         ((2, 3), b'g', [(3, 3)]),
-                         ((0, 0), b'', [(4, 4), (4, 5)]),
-                         ((0, 0), b'', [(6, 7), (7, 7)])]]
+            expected = [[((0, 0), [b''], [(0, 1)]),
+                         ((2, 3), [b'g'], [(3, 3)]),
+                         ((0, 0), [b''], [(4, 4), (4, 5)]),
+                         ((0, 0), [b''], [(6, 7), (7, 7)])]]
 
             regions.append(('2', 1))
-            expected.append([((2, 3), b'g', [(3, 3)]),
-                             ((0, 0), b'', [(4, 4), (4, 5)]),
-                             ((0, 0), b'', [(6, 7), (7, 7)])])
+            expected.append([((2, 3), [b'g'], [(3, 3)]),
+                             ((0, 0), [b''], [(4, 4), (4, 5)]),
+                             ((0, 0), [b''], [(6, 7), (7, 7)])])
 
             regions.append(('2', 1, 4))
-            expected.append([((2, 3), b'g', [(3, 3)])])
+            expected.append([((2, 3), [b'g'], [(3, 3)])])
 
             regions.append(('2', 1, 5))
-            expected.append([((2, 3), b'g', [(3, 3)])])
+            expected.append([((2, 3), [b'g'], [(3, 3)])])
 
             for region, exp in zip(regions, expected):
                 temp_file, snps = vcf.get_snps_from_region(region)
