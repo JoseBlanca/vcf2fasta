@@ -548,6 +548,7 @@ class Seqs():
         else:
             subregions = self.coverages.get_regions(region)
 
+        masked_seqs = [b''] * n_samples
         for subregion, are_covered in subregions:
             assert len(are_covered) == n_samples
 
@@ -559,8 +560,8 @@ class Seqs():
                     sample_subseq = subseq
                 else:
                     sample_subseq = b'N' * subseq_len
-                sample_subseqs[sample_idx] += sample_subseq
-            yield subregion, sample_subseqs
+                masked_seqs[sample_idx] += sample_subseq
+        return masked_seqs
 
 
 class SeqsFasta(Seqs):
@@ -738,27 +739,23 @@ class Test(unittest.TestCase):
         covs = GenomicCoverages(fhand, min_cov=7, sep=b' ')
         ref_fhand = StringIO(FASTA1)
         seqs = SeqsFasta(ref_fhand, coverages=covs, n_samples=3)
-        expected = [((0, 1), [b'N', b'N', b'N']),
-                    ((1, 3), [b'tC', b'tC', b'tC']),
-                    ((3, 4), [b'N', b'N', b'g']),
-                    ((4, 5), [b'N', b'N', b'N'])]
+        expected = [b'NtCNN', b'NtCNN', b'NtCgN']
         assert list(seqs.get_masked_regions(['20'])) == expected
 
         fhand = BytesIO(cov)
         covs = GenomicCoverages(fhand, min_cov=6, sep=b' ')
         ref_fhand = StringIO(FASTA1)
         seqs = SeqsFasta(ref_fhand, coverages=covs, n_samples=3)
-        expected = [((0, 5), [b'NNNNN', b'NNNNN', b'NNNNN'])]
+        expected = [b'NNNNN', b'NNNNN', b'NNNNN']
         assert list(seqs.get_masked_regions(['2'])) == expected
-        expected = [((1, 4), [b'tCg', b'tCg', b'tCg']),
-                    ((4, 5), [b'N', b'N', b'N'])]
+        expected = [b'tCgN', b'tCgN', b'tCgN']
         assert list(seqs.get_masked_regions(['20', 1])) == expected
-        expected = [((0, 5), [b'NNNNN', b'NNNNN', b'NNNNN'])]
+        expected = [b'NNNNN', b'NNNNN', b'NNNNN']
         assert list(seqs.get_masked_regions(['2'])) == expected
 
         ref_fhand = StringIO(FASTA1)
         seqs = SeqsFasta(ref_fhand, n_samples=3)
-        expected = [((0, 5), [b'atCga', b'atCga', b'atCga'])]
+        expected = [b'atCga', b'atCga', b'atCga']
         assert list(seqs.get_masked_regions(['20'])) == expected
 
     def test_seq_for_sample(self):
